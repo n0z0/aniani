@@ -116,9 +116,9 @@ void printScanResults() {
   Serial.println("\n--- Jaringan Ditemukan ---");
   for (int i = 0; i < wifi_util.wifi_list.num; i++) {
     Serial.print((String)(i + 1) + ": ");
-    Serial.print(wifi_util.wifi_list.ssid[i]);
+    Serial.print(wifi_util.wifi_list.ssid[i].c_str());
     Serial.print(" (");
-    Serial.print(wifi_util.wifi_list.bssid[i]);
+    Serial.print(wifi_util.wifi_list.bssid[i].c_str());
     Serial.print(", CH: ");
     Serial.print(wifi_util.wifi_list.channel[i]);
     Serial.println(")");

