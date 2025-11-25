@@ -73,14 +73,6 @@ void loop() {
   delay(100); 
   Keyboard.print("Sound mixer options");
   delay(3000);
-  Keyboard.press(KEY_DOWN_ARROW);
-  delay(100);
-  Keyboard.releaseAll();
-  delay(100);
-  Keyboard.press(KEY_DOWN_ARROW);
-  delay(100);
-  Keyboard.releaseAll();
-  delay(100);
   Keyboard.press(KEY_RETURN);
   delay(100);
   Keyboard.releaseAll();
