@@ -17,7 +17,7 @@ void setup() {
   delay(1000); // Tunggu Run Dialog terbuka
   
   // Mengetik "notepad" dan menekan Enter
-  Keyboard.println("https://www.youtube.com/watch?v=DeKQPLe3Cls");
+  Keyboard.println("https://www.youtube.com/watch?v=mN9vQHkbdmI");
     // 1. Tekan tombol Volume Up
   Keyboard.press(HID_KEY_VOLUME_UP);
   
